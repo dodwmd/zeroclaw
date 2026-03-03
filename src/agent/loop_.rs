@@ -1741,8 +1741,14 @@ pub async fn run_tool_call_loop(
         }
 
         if tool_calls.is_empty() {
-            let missing_tool_call_signal =
-                parse_issue_detected || looks_like_deferred_action_without_tool_call(&display_text);
+            // Treat completely empty responses (no text, no tool calls) as a
+            // retryable signal — some providers (e.g. Mercury-2) return empty
+            // content when a tool-call JSON serialisation fails server-side.
+            let is_empty_response = display_text.trim().is_empty()
+                && response_text.trim().is_empty();
+            let missing_tool_call_signal = is_empty_response
+                || parse_issue_detected
+                || looks_like_deferred_action_without_tool_call(&display_text);
             let missing_tool_call_followthrough = !missing_tool_call_retry_used
                 && iteration + 1 < max_iterations
                 && !tool_specs.is_empty()
@@ -1750,7 +1756,9 @@ pub async fn run_tool_call_loop(
             if missing_tool_call_followthrough {
                 missing_tool_call_retry_used = true;
                 missing_tool_call_retry_prompt = Some(MISSING_TOOL_CALL_RETRY_PROMPT.to_string());
-                let retry_reason = if parse_issue_detected {
+                let retry_reason = if is_empty_response {
+                    "empty_response_no_text_no_tools"
+                } else if parse_issue_detected {
                     "parse_issue_detected"
                 } else {
                     "deferred_action_text_detected"
